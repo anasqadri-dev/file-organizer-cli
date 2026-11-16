@@ -2,73 +2,75 @@
 
 **Project:** `anasqadri-dev_file-organizer-cli`  
 **Repository:** `anasqadri-dev/file-organizer-cli`  
-**Analysis branch:** `main`  
-**Baseline:** The eight findings below were transcribed from the original SonarCloud issue list/dashboard provided during the lab. The Sonar rule keys were not visible in that evidence, so this report preserves the displayed rule descriptions rather than guessing rule IDs.
+**Analysis branch:** `main`
 
-## Task 1 — Connect and run the first scan
+## Task 1 — Configure SonarCloud
 
-- Connected the public GitHub repository to the SonarCloud project `anasqadri-dev_file-organizer-cli`.
-- Added `sonar-project.properties` at the repository root.
-- Configured the GitHub Actions secret `SONAR_TOKEN` (the token value is intentionally not stored in this repository).
-- Disabled SonarCloud Automatic Analysis because this project uses CI-based analysis through GitHub Actions.
-- CI workflow: `.github/workflows/sonarcloud.yml`; scanner action: `SonarSource/sonarqube-scan-action@v8.5.0`.
-- The scanner successfully submitted an analysis on 2026-11-16 for commit `3db50a3dac748c8db7e2c5a6d9c9a53107706965`.
-- Successful run: https://github.com/anasqadri-dev/file-organizer-cli/actions/runs/43854495817
+- Connected the GitHub repository to SonarCloud project `anasqadri-dev_file-organizer-cli`.
+- Added `sonar-project.properties`.
+- Added the `SONAR_TOKEN` GitHub Actions secret; the token value is not stored in this repository.
+- Disabled Automatic Analysis because the project uses CI-based analysis through GitHub Actions.
+- CI workflow: `.github/workflows/sonarcloud.yml`.
+- Scanner action: `SonarSource/sonarqube-scan-action@v8.5.0`.
+- Enabled `sonar.qualitygate.wait=true` so the CI job waits for the server-side Quality Gate result.
+
+## Task 2 — Record and classify findings
+
+The original issue list supplied for the lab contained eight findings. The later live dashboard screenshot for `main` showed four currently open issues under the selected Open + Confirmed filters:
+
+| Current finding shown in dashboard | Category | Severity | Location shown | Remediation |
+|---|---|---|---|---|
+| Path Traversal via faulty LLM-supplied CLI arguments | Security | High | `organizeFiles.js:32` | Restrict CLI input to one safe child-directory name; resolve real paths and reject symlink escapes outside the trusted working directory. |
+| Path Traversal via faulty LLM-supplied CLI arguments | Security | High | `organizeFiles.js:112` | Apply the same trusted-directory boundary to the organizing operation; verify with the next SonarCloud scan. |
+| Prefer using an optional chain expression instead, as it's more concise and easier to read. | Maintainability | Low | `organizeFiles.js:34` | Use optional chaining when reading the error code. |
+| Unexpected 'await' inside a loop. | Maintainability | Low | `organizeFiles.js:118` | Collect regular file names and process them with `Promise.all`; each individual file operation still awaits its own mkdir and rename. |
+
+The dashboard screenshot showed Quality Gate **Failed**, Security grade **C** with 2 open issues, Reliability grade **A** with 0 open issues, and Maintainability grade **A** with 2 open issues. The New Code tab showed 2 failed conditions. These are the observed values at the time of the screenshot, not the result of the pending remediation scan.
+
+## Task 3 — Security remediation
+
+The previous path validation was not sufficient to satisfy the live SonarCloud security findings. The follow-up change therefore uses a narrower interface:
+
+- The CLI accepts only a single direct-child directory name containing ASCII letters, digits, underscores, or hyphens (or `.` for the current directory).
+- Absolute paths, separators, and traversal strings such as `../outside` are rejected before filesystem operations.
+- The trusted working directory and requested target are canonicalized with `realpath`.
+- The canonical target must remain within the trusted working directory; a symlink pointing outside is rejected.
+- Files are moved only into extension directories created within that validated target directory.
+- The root directory and the organizer's own script directory remain protected.
+
+Example usage from the parent working directory:
+
+```bash
+node organizeFiles.js Downloads
+```
+
+The argument is a child directory name, not an arbitrary absolute or relative path.
+
+## Task 4 — Maintainability remediation
+
+- Use optional chaining for `error?.code`.
+- Filter the directory entries and process the resulting file list with `Promise.all`, avoiding an awaited operation directly inside the loop.
+- Each file operation still awaits directory creation and rename to preserve correct per-file operation ordering.
+- Use explicit `node:` built-in module specifiers.
+
+## Task 5 — Regression tests and final scan
+
+The regression suite covers:
+1. Extension normalization and extensionless files.
+2. Rejection of traversal and absolute paths.
+3. Rejection of missing target directories.
+4. Rejection of a file used as a directory.
+5. Normal organization while leaving directories and extensionless files untouched.
+6. Ignoring non-regular entries.
+7. Rejection of filesystem-root targets.
+8. Rejection of symlinks that escape the trusted working directory.
+
+The prior scanner run submitted an analysis successfully, but the supplied dashboard screenshot proves that its Quality Gate failed. The follow-up branch now contains the narrower path validation and additional regression tests. Its new CI run and SonarCloud Quality Gate result must complete before claiming the issues are resolved.
+
+- Previous analysis run: https://github.com/anasqadri-dev/file-organizer-cli/actions/runs/43854495817
 - SonarCloud dashboard: https://sonarcloud.io/dashboard?id=anasqadri-dev_file-organizer-cli&branch=main
-
-## Task 2 — Triage the baseline findings
-
-| # | Rule / finding shown in SonarCloud | File and line (baseline) | Severity as displayed | Category | Risk and disposition |
-|---|---|---|---|---|---|
-| 1 | Path Traversal via faulty LLM-supplied CLI arguments | `organizeFiles.js:14` | High | Security | An unvalidated path could direct file operations outside the intended directory. Fixed with canonical path resolution, validation, root rejection, and destination-containment checks. |
-| 2 | Prefer `node:fs/promises` over `fs/promises` | `organizeFiles.js:1` | Medium | Maintainability | Explicit built-in module specifier avoids ambiguity. Updated to `node:fs/promises`. |
-| 3 | Prefer `node:fs` over `fs` | `organizeFiles.js:2` | Medium | Maintainability | Explicit built-in module specifier improves consistency. The final implementation no longer needs the synchronous API. |
-| 4 | Prefer `node:path` over `path` | `organizeFiles.js:3` | Medium | Maintainability | Explicit built-in module specifier clarifies the dependency. Updated to `node:path`. |
-| 5 | Prefer top-level await over using a promise chain | `organizeFiles.js:40` | Medium | Maintainability | The CLI entry point was simplified to one async invocation with a clear error handler. The project remains CommonJS, so top-level await is not applicable without an unnecessary module-system migration. |
-| 6 | Unexpected `await` inside a loop | `organizeFiles.js:21` | Low | Maintainability | Sequential file processing was retained deliberately to keep filesystem mutations deterministic and avoid concurrent operations against shared destination folders. |
-| 7 | Unexpected `await` inside a loop | `organizeFiles.js:32` | Low | Maintainability | File operations were extracted into `organizeFile`; sequential processing remains intentional for predictable filesystem behaviour. |
-| 8 | Unexpected `await` inside a loop | `organizeFiles.js:35` | Low | Maintainability | The move is awaited to ensure each filesystem operation completes before the next item is processed. This is a documented trade-off rather than an unexamined suppression. |
-
-### Baseline severity summary
-
-- High: 1 Security finding.
-- Medium: 4 Maintainability findings.
-- Low: 3 Maintainability findings.
-- The supplied eight-item baseline did not explicitly identify any Bug or Vulnerability issue type. Severity and issue type are separate SonarCloud attributes; the live Issues page is the authoritative source for the final current classification.
-
-## Task 3 — Fix security findings first
-
-- Resolved the path-traversal risk by resolving the supplied path before filesystem work.
-- Rejects filesystem-root targets, missing paths, non-directory targets, and the script's own directory.
-- Verifies generated extension-folder destinations remain inside the selected target directory.
-- Uses `lstat` and directory-entry types so symbolic links and directories are not treated as regular files.
-- Added regression coverage for invalid paths, root rejection, and non-regular entries.
-
-## Task 4 — Reduce maintainability findings
-
-- Replaced ambiguous built-in imports with `node:`-prefixed specifiers.
-- Extracted extension parsing into `getExtensionFolder`.
-- Extracted per-file work into `organizeFile`.
-- Kept filesystem operations sequential intentionally; parallelizing moves is not automatically safer or more maintainable for a CLI that mutates one shared directory.
-- The final live Issues page should be checked after report processing to confirm the exact remaining Code Smells and their severities. Do not claim that every baseline smell disappeared solely because the scanner submitted successfully.
-
-## Task 5 — Re-scan and regression verification
-
-- CI workflow run: https://github.com/anasqadri-dev/file-organizer-cli/actions/runs/43854495817
-- Run result: **Success**.
-- SonarCloud scanner result: **ANALYSIS SUCCESSFUL**; report submitted to the SonarCloud project for processing.
-- Regression tests in the same run: **6 passed, 0 failed**.
-- `sonar.qualitygate.wait=true` is configured so subsequent CI scans wait for the Quality Gate result and fail the job if the gate does not pass.
-- Quality Gate status: **awaiting the CI run with Quality Gate waiting enabled / live dashboard confirmation**.
-- Before/after dashboard screenshots: capture the original baseline dashboard and the updated dashboard from SonarCloud for submission. The CI run log is not a substitute for these dashboard screenshots.
+- Before/after dashboard screenshots should be included in the lab submission.
 
 ## Remediation summary
 
-- Added argument validation and canonical target resolution.
-- Rejected filesystem-root targets and non-directory paths.
-- Checked destination containment before moving files.
-- Switched to explicit `node:` built-in module specifiers.
-- Extracted extension parsing and single-file organization into named helpers.
-- Used `Dirent` entries and `lstat` to avoid following symbolic links as regular files.
-- Added six automated regression tests for extension parsing, invalid paths, normal organization, non-regular entries, and root-path rejection.
-- Configured CI-based SonarCloud analysis and Quality Gate waiting.
+The follow-up changes address the four issues visible in the latest supplied dashboard screenshot. Do not report them as fixed until the subsequent SonarCloud analysis confirms the findings are resolved and the Quality Gate passes.
