@@ -27,8 +27,13 @@ jobs:
         with:
           node-version: 20
 
-      - name: Run regression tests
-        run: npm test
+      - name: Run regression tests with coverage
+        run: npm run test:coverage
+
+      - name: Generate LCOV coverage report
+        run: |
+          mkdir -p coverage
+          node --experimental-test-coverage --test --test-reporter=lcov > coverage/lcov.info
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v8.5.0
