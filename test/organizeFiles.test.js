@@ -68,6 +68,7 @@ test("organize handles an empty directory", async (t) => {
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   await fs.mkdir(path.join(base, "empty"));
   await organize("empty", base);
+  assert.deepEqual(await fs.readdir(path.join(base, "empty")), []);
 });
 
 test("organizeFile ignores non-regular entries and the organizer script", async (t) => {
