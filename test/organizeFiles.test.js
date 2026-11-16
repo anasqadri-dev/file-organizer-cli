@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 
 const {
@@ -15,11 +16,12 @@ async function createTemporaryDirectory() {
   return fs.mkdtemp(path.join(os.tmpdir(), "file-organizer-"));
 }
 
-test("getExtensionFolder normalizes extensions and handles extensionless files", () => {
+test("getExtensionFolder normalizes extensions and ignores extensionless or unsafe extensions", () => {
   assert.equal(getExtensionFolder("photo.PNG"), "png");
   assert.equal(getExtensionFolder("archive.tar.gz"), "gz");
   assert.equal(getExtensionFolder("README"), null);
   assert.equal(getExtensionFolder(".gitignore"), null);
+  assert.equal(getExtensionFolder("payload.@@@"), null);
 });
 
 test("resolveTargetDirectory rejects traversal and absolute paths", async (t) => {
@@ -61,12 +63,22 @@ test("organize moves files by extension and leaves directories and extensionless
   assert.equal((await fs.stat(path.join(directory, "existing-folder"))).isDirectory(), true);
 });
 
-test("organizeFile ignores non-regular entries", async (t) => {
+test("organize handles an empty directory", async (t) => {
+  const base = await createTemporaryDirectory();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.mkdir(path.join(base, "empty"));
+  await organize("empty", base);
+});
+
+test("organizeFile ignores non-regular entries and the organizer script", async (t) => {
   const directory = await createTemporaryDirectory();
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   await fs.mkdir(path.join(directory, "folder"));
+  await fs.writeFile(path.join(directory, "organizeFiles.js"), "leave me");
   await organizeFile(directory, "folder");
+  await organizeFile(directory, "organizeFiles.js");
   assert.equal((await fs.stat(path.join(directory, "folder"))).isDirectory(), true);
+  assert.equal(await fs.readFile(path.join(directory, "organizeFiles.js"), "utf8"), "leave me");
 });
 
 test("resolveTargetDirectory rejects filesystem root", async () => {
@@ -83,4 +95,30 @@ test("resolveTargetDirectory rejects symlinks that escape the working directory"
   ]));
   await fs.symlink(outside, path.join(base, "escape"), "dir");
   await assert.rejects(resolveTargetDirectory("escape", base), /Directory does not exist/);
+});
+
+test("CLI reports invalid target and exits with failure", async (t) => {
+  const base = await createTemporaryDirectory();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, [path.join(__dirname, "..", "organizeFiles.js"), "missing"], {
+    cwd: base,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Directory does not exist/);
+});
+
+test("CLI organizes the requested child directory", async (t) => {
+  const base = await createTemporaryDirectory();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.mkdir(path.join(base, "inbox"));
+  await fs.writeFile(path.join(base, "inbox", "notes.txt"), "notes");
+
+  const result = spawnSync(process.execPath, [path.join(__dirname, "..", "organizeFiles.js"), "inbox"], {
+    cwd: base,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /File organization completed/);
+  assert.equal(await fs.readFile(path.join(base, "inbox", "txt", "notes.txt"), "utf8"), "notes");
 });
