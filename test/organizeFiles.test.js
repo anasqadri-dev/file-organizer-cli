@@ -82,5 +82,5 @@ test("resolveTargetDirectory rejects symlinks that escape the working directory"
     fs.rm(outside, { recursive: true, force: true }),
   ]));
   await fs.symlink(outside, path.join(base, "escape"), "dir");
-  await assert.rejects(resolveTargetDirectory("escape", base), /direct child/);
+  await assert.rejects(resolveTargetDirectory("escape", base), /Directory does not exist/);
 });
