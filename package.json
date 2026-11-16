@@ -1,0 +1,15 @@
+{
+  "name": "file-organizer-cli",
+  "version": "1.0.0",
+  "description": "A Node.js command-line utility that organizes files by extension.",
+  "main": "organizeFiles.js",
+  "scripts": {
+    "start": "node organizeFiles.js",
+    "test": "node --test",
+    "test:coverage": "node --experimental-test-coverage --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
