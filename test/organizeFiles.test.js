@@ -25,8 +25,8 @@ test("getExtensionFolder normalizes extensions and handles extensionless files",
 test("resolveTargetDirectory rejects traversal and absolute paths", async (t) => {
   const base = await createTemporaryDirectory();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
-  await assert.rejects(resolveTargetDirectory("../outside", base), /directory name only/);
-  await assert.rejects(resolveTargetDirectory(path.resolve(base), base), /directory name only/);
+  await assert.rejects(resolveTargetDirectory("../outside", base), /child directory/);
+  await assert.rejects(resolveTargetDirectory(path.resolve(base), base), /child directory/);
 });
 
 test("resolveTargetDirectory rejects a missing child directory", async (t) => {
@@ -39,7 +39,7 @@ test("resolveTargetDirectory rejects a file instead of a directory", async (t) =
   const base = await createTemporaryDirectory();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   await fs.writeFile(path.join(base, "target"), "content");
-  await assert.rejects(resolveTargetDirectory("target", base), /existing directory/);
+  await assert.rejects(resolveTargetDirectory("target", base), /Directory does not exist/);
 });
 
 test("organize moves files by extension and leaves directories and extensionless files in place", async (t) => {
