@@ -1,42 +1,59 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
-const DEFAULT_DIRECTORY = process.cwd();
+const DEFAULT_DIRECTORY = ".";
 const DIRECTORY_ARGUMENT_INDEX = 2;
 const SCRIPT_NAME = path.basename(__filename);
 const SUCCESS_MESSAGE = "File organization completed!";
 const MISSING_DIRECTORY_MESSAGE = "Directory does not exist.";
 const INVALID_DIRECTORY_MESSAGE = "Target must be an existing directory.";
 const INVALID_TARGET_MESSAGE = "Target directory must not be the filesystem root.";
+const INVALID_NAME_MESSAGE = "Provide a directory name only (letters, numbers, underscores, or hyphens).";
+const OUTSIDE_BASE_MESSAGE = "Target directory must be a direct child of the working directory.";
 const SAME_DIRECTORY_MESSAGE = "Cannot organize a directory into itself.";
 const ERROR_EXIT_CODE = 1;
+const SAFE_DIRECTORY_NAME = /^[A-Za-z0-9_-]+$/;
 
 /**
- * Resolve and validate a user-supplied directory before moving any files.
- * Resolving the path once prevents traversal segments from escaping the
- * requested target and ensures all generated destinations remain contained.
+ * Resolve a single child-directory name against a trusted base directory.
+ * Absolute paths, traversal segments, separators, and symlink escapes are rejected.
  *
  * @param {string} requestedDirectory
+ * @param {string} baseDirectory
  * @returns {Promise<string>}
  */
-async function resolveTargetDirectory(requestedDirectory) {
-  const targetDirectory = path.resolve(requestedDirectory);
-  const rootDirectory = path.parse(targetDirectory).root;
-
-  if (targetDirectory === rootDirectory) {
-    throw new Error(INVALID_TARGET_MESSAGE);
+async function resolveTargetDirectory(requestedDirectory = DEFAULT_DIRECTORY, baseDirectory = process.cwd()) {
+  if (
+    typeof requestedDirectory !== "string" ||
+    (requestedDirectory !== DEFAULT_DIRECTORY && !SAFE_DIRECTORY_NAME.test(requestedDirectory))
+  ) {
+    throw new Error(INVALID_NAME_MESSAGE);
   }
 
-  let directoryStats;
+  const trustedBase = await fs.realpath(baseDirectory);
+  const candidatePath = path.join(trustedBase, requestedDirectory);
+  let targetDirectory;
+
   try {
-    directoryStats = await fs.stat(targetDirectory);
+    targetDirectory = await fs.realpath(candidatePath);
   } catch (error) {
-    if (error && error.code === "ENOENT") {
+    if (error?.code === "ENOENT") {
       throw new Error(MISSING_DIRECTORY_MESSAGE);
     }
     throw error;
   }
 
+  const relativeTarget = path.relative(trustedBase, targetDirectory);
+  if (relativeTarget.startsWith(`..${path.sep}`) || relativeTarget === ".." || path.isAbsolute(relativeTarget)) {
+    throw new Error(OUTSIDE_BASE_MESSAGE);
+  }
+
+  const rootDirectory = path.parse(targetDirectory).root;
+  if (targetDirectory === rootDirectory) {
+    throw new Error(INVALID_TARGET_MESSAGE);
+  }
+
+  const directoryStats = await fs.stat(targetDirectory);
   if (!directoryStats.isDirectory()) {
     throw new Error(INVALID_DIRECTORY_MESSAGE);
   }
@@ -51,7 +68,6 @@ async function resolveTargetDirectory(requestedDirectory) {
 
 /**
  * Return a safe extension folder name, or null for extensionless files.
- *
  * @param {string} fileName
  * @returns {string|null}
  */
@@ -64,8 +80,7 @@ function getExtensionFolder(fileName) {
 }
 
 /**
- * Move one file to its extension folder.
- *
+ * Move one regular file to its extension folder.
  * @param {string} targetDirectory
  * @param {string} fileName
  */
@@ -76,7 +91,6 @@ async function organizeFile(targetDirectory, fileName) {
 
   const sourcePath = path.join(targetDirectory, fileName);
   const sourceStats = await fs.lstat(sourcePath);
-
   if (!sourceStats.isFile()) {
     return;
   }
@@ -88,7 +102,6 @@ async function organizeFile(targetDirectory, fileName) {
 
   const destinationDirectory = path.resolve(targetDirectory, extensionFolder);
   const relativeDestination = path.relative(targetDirectory, destinationDirectory);
-
   if (
     relativeDestination.startsWith(`..${path.sep}`) ||
     relativeDestination === ".." ||
@@ -98,26 +111,20 @@ async function organizeFile(targetDirectory, fileName) {
   }
 
   await fs.mkdir(destinationDirectory, { recursive: true });
-  const destinationPath = path.join(destinationDirectory, fileName);
-  await fs.rename(sourcePath, destinationPath);
+  await fs.rename(sourcePath, path.join(destinationDirectory, fileName));
 }
 
 /**
- * Organize all regular files in the specified directory.
- *
+ * Organize regular files in a direct child directory of the working directory.
  * @param {string} requestedDirectory
+ * @param {string} baseDirectory
  */
-async function organize(requestedDirectory = DEFAULT_DIRECTORY) {
-  const targetDirectory = await resolveTargetDirectory(requestedDirectory);
+async function organize(requestedDirectory = DEFAULT_DIRECTORY, baseDirectory = process.cwd()) {
+  const targetDirectory = await resolveTargetDirectory(requestedDirectory, baseDirectory);
   const entries = await fs.readdir(targetDirectory, { withFileTypes: true });
+  const files = entries.filter((entry) => !entry.isDirectory()).map((entry) => entry.name);
 
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      continue;
-    }
-    await organizeFile(targetDirectory, entry.name);
-  }
-
+  await Promise.all(files.map((fileName) => organizeFile(targetDirectory, fileName)));
   console.log(SUCCESS_MESSAGE);
 }
 
